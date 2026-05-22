@@ -13,7 +13,7 @@ using NCDatasets: Dataset
 using Scratch: Scratch, @get_scratch!
 
 using NumericalEarth.DataWrangling: DataWrangling, Metadata, Metadatum, metadata_path,
-                       dataset_variable_name, reversed_vertical_axis
+                       dataset_variable_name, reversed_vertical_axis, DownloadProgress
 
 download_GLODAP_cache::String = ""
 function __init__()
@@ -36,6 +36,29 @@ GLODAP_variable_names = Dict(
     )
 
 
+# this is necessary because the variable name in the dataset
+# does not necessarily correspond to what is in the filename
+# note that I am not including the following files for now 
+# GLODAPv2.OmegaCinsitu.nc 
+# GLODAPv2.pHtsinsitu.nc  
+# GLODAPv2.OmegaAinsitu.nc 
+# GLODAPv2.pHts25p0.nc  
+#
+GLODAP_file_variable_names = Dict(
+    :temperature       => "theta",
+    :salinity          => "salinity",
+    :phosphate         => "phosphate",
+    :nitrate           => "nitrate",
+    :silicate          => "silicate",
+    :dissolved_oxygen  => "oxygen",
+    :dic               => "tco2",
+    :preindustrial_dic => "tco2",  # need to check is preindustrial dic is in this file too
+    :alkalinity        => "talk"
+    )
+
+        
+
+
 # Dataset types
 abstract type GLODAPDataset end 
 
@@ -46,9 +69,8 @@ end
 GLODAPClimatology(;  product_year=2016) = GLODAPClimatology(product_year)
 
 function DataWrangling.default_download_directory(::GLODAPClimatology)
-    return mkpath(joinpath(download_GLODAP_cache, "climatology"))
+    return mkpath(download_GLODAP_cache)
 end
-
 
 # Climatology: single snapshot, no date
 DataWrangling.all_dates(::GLODAPClimatology, args...) = nothing
@@ -119,10 +141,16 @@ DataWrangling.metaprefix(::GLODAPMetadatum) = "GLODAPMetadatum"
 # Map from date to GLODAP period number (used by extension for download)
 #glodap_period(::GLODAPClimatology, date) = 0
 
+
 function DataWrangling.metadata_filename(::GLODAPClimatology, name, date, region)
-    varname = GLODAP_variable_names[name]
-    return "GLODAPv2.2016b.$(varname).nc"
+    varname = GLODAP_file_variable_names[name]
+    return "GLODAPv2.$(varname).nc"
+
 end
+
+# augment the metadat file path
+DataWrangling.metadata_path(metadata::GLODAPMetadatum) = joinpath(metadata.dir, "GLODAPv2_Mapped_Climatologies", metadata.filename) 
+
 
 # GLODAP NetCDF variables are named "{tracer}_an" for the objectively analyzed field
 #DataWrangling.dataset_variable_name(data::GLODAPMetadata) = GLODAP_variable_names[data.name] * "_an"
@@ -143,27 +171,8 @@ function DataWrangling.retrieve_data(metadata::Metadatum{<:GLODAPDataset})
 
     path = metadata_path(metadata)
 
-    # already downloaded
-    #isfile(path) && return path
-
-    mkpath(metadata.dir)
-
-    archive = joinpath(metadata.dir, "GLODAPv2_Mapped_Climatology.tar.gz")
-
-    # download tarball once
-    if !isfile(archive)
-        Downloads.download(GLODAP_url,
-                           archive;
-                           progress=DownloadProgress())
-    end
-
-    # extract into DIRECTORY
-    open(GzipDecompressorStream, archive) do io
-        Tar.extract(io, metadata.dir)
-    end
-
-    name = dataset_variable_name(metadata)
-
+    name = GLODAP_variable_names(metadata.name)
+    
     ds = Dataset(path)
     raw = ds[name][:, :, :, 1]
     close(ds)
@@ -181,5 +190,39 @@ function DataWrangling.retrieve_data(metadata::Metadatum{<:GLODAPDataset})
     return data
 
 end
+
+
+function Downloads.download(metadata::Metadatum{<:GLODAPDataset})
+
+    # path to file /Users/lukegloege/.julia/scratchspaces/00000000-0000-0000-0000-000000000000/GLODAP/climatology/GLODAPv2.2016b.TALK.nc
+    path = metadata_path(metadata)
+
+    @info "path" path
+    @info "metadata.dir" metadata.dir
+
+    needs_download = !isfile(path)
+
+    @info "needs download" needs_download
+    if  needs_download 
+        @info "metadata_path=" path
+        @info "metadata_dir=" metadata.dir
+
+        mktempdir() do tmpdir
+            @info "tmpdir=" tmpdir
+            archive = joinpath(tmpdir, "GLODAPv2_Mapped_Climatology.tar.gz")
+            @info "archive=" archive
+            if !isfile(archive)
+                Downloads.download(GLODAP_url, archive; progress=DownloadProgress())
+            end
+
+            # use archive here
+            open(GzipDecompressorStream, archive) do io
+                Tar.extract(io, metadata.dir)
+            end
+
+        end
+    end
+end
+
 
 end # module
