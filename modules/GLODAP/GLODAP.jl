@@ -165,32 +165,6 @@ end
 
 DataWrangling.inpainted_metadata_path(metadata::GLODAPMetadatum) = joinpath(metadata.dir, inpainted_metadata_filename(metadata))
 
-# Custom retrieve_data: GLODAP NetCDF files contain Missing values (from _FillValue)
-# which must be converted to NaN before the GPU kernel in set_metadata_field!.
-function DataWrangling.retrieve_data(metadata::Metadatum{<:GLODAPDataset})
-
-    path = metadata_path(metadata)
-
-    name = GLODAP_variable_names(metadata.name)
-    
-    ds = Dataset(path)
-    raw = ds[name][:, :, :, 1]
-    close(ds)
-
-    # Convert Union{Missing, Float32} → Float32 with NaN for missing
-    data = Array{Float32}(undef, size(raw))
-    for i in eachindex(raw)
-        data[i] = ismissing(raw[i]) ? NaN32 : Float32(raw[i])
-    end
-
-    if reversed_vertical_axis(metadata.dataset)
-        data = reverse(data, dims=3)
-    end
-
-    return data
-
-end
-
 
 function Downloads.download(metadata::Metadatum{<:GLODAPDataset})
 
@@ -222,6 +196,43 @@ function Downloads.download(metadata::Metadatum{<:GLODAPDataset})
 
         end
     end
+end
+
+
+
+# Custom retrieve_data: GLODAP NetCDF files contain Missing values (from _FillValue)
+# which must be converted to NaN before the GPU kernel in set_metadata_field!.
+function DataWrangling.retrieve_data(metadata::Metadatum{<:GLODAPDataset})
+
+    path = metadata_path(metadata)
+
+    @info "retrieve path" path
+
+    @info "metadata.name" metadata.name
+    #name = GLODAP_variable_names[metadata.name]
+    name = GLODAP_file_variable_names[metadata.name]
+
+    @info "var name" name
+
+    ds = Dataset(path)
+    raw = ds[name][:, :, :, 1]
+
+    close(ds)
+
+    # Convert Union{Missing, Float32} → Float32 with NaN for missing
+    data = Array{Float32}(undef, size(raw))
+    for i in eachindex(raw)
+        data[i] = ismissing(raw[i]) ? NaN32 : Float32(raw[i])
+    end
+
+    if reversed_vertical_axis(metadata.dataset)
+        data = reverse(data, dims=3)
+    end
+
+    #@info data
+
+    return data
+
 end
 
 
